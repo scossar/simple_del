@@ -7,7 +7,7 @@ typedef struct _delay {
   t_float x_s_per_msec; // samples per msec
   t_float x_delay_buffer_msecs;
   int x_delay_buffer_samples; // number of samples in delay buffer
-  int x_delay_msecs; // number of msecs to delay
+  t_float x_delay_msecs; // number of msecs to delay
   int x_delay_samples; // number of samples of delay
   t_sample *x_delay_buffer;
   int x_pd_block_size;
@@ -41,7 +41,7 @@ static void *delay_new(t_floatarg buffer_msecs, t_floatarg delay_msecs)
 
 
   x->x_delay_msecs_inlet = inlet_new(&x->x_obj, &x->x_obj.ob_pd, &s_signal, &s_signal);
-  pd_float((t_pd *)x->x_delay_msecs_inlet, x->x_delay_msecs); // sets inlet initial value from
+  // pd_float((t_pd *)x->x_delay_msecs_inlet, x->x_delay_msecs); // sets inlet initial value from
 
   outlet_new(&x->x_obj, &s_signal);
 
@@ -71,14 +71,8 @@ static void delay_buffer_update(t_delay *x)
 
 static void delay_set_system_params(t_delay *x, int blocksize, t_float sr)
 {
-  if (blocksize > x->x_pd_block_size) {
-    x->x_pd_block_size = blocksize;
-  }
-
-  // awkward, but maybe clearer than the original source code?
-  if ((sr * 0.001f) > x->x_s_per_msec) {
-    x->x_s_per_msec = sr * 0.001f;
-  }
+  x->x_pd_block_size = blocksize;
+  x->x_s_per_msec = sr * 0.001f;
 }
 
 static void delay_set_delay_samples(t_delay *x, t_float f)
@@ -87,7 +81,7 @@ static void delay_set_delay_samples(t_delay *x, t_float f)
   // this approach might make sense later when x->delay_msecs can be set via a
   // message instead of just as a creating argument.
   x->x_delay_msecs = f;
-  x->x_delay_samples = (int)(0.5 + x->x_s_per_msec * x->x_delay_msecs) + x->x_pd_block_size;
+  x->x_delay_samples = (int)(0.5 + x->x_s_per_msec * x->x_delay_msecs);
 }
 
 static t_int *delay_perform(t_int *w)
@@ -100,8 +94,6 @@ static t_int *delay_perform(t_int *w)
 
   int write_phase = x->x_phase;
   write_phase += n;
-  // not needed for variable delay?
-  // int read_phase = write_phase - x->x_delay_samples;
 
   int delay_buffer_samps = x->x_delay_buffer_samples;
 
@@ -112,10 +104,6 @@ static t_int *delay_perform(t_int *w)
   t_sample *wp = vp + write_phase;
   t_sample *rp;
   t_sample *ep = vp + (x->x_delay_buffer_samples + XTRASAMPS);
-
-  // not needed for variable delay
-  // if (read_phase < 0) read_phase += delay_buffer_samps;
-  // rp = vp + read_phase;
 
   if (limit < 0) { // blocksize is larger than delay buffer size
     while (n--) {
@@ -130,7 +118,7 @@ static t_int *delay_perform(t_int *w)
   }
 
   while (n--) {
-    // write input to delay buffer
+    // write to delay buffer
     t_sample f = *in1++;
     if (PD_BIGORSMALL(f)) f = 0.0f;
     *wp++ = f;
@@ -155,8 +143,7 @@ static t_int *delay_perform(t_int *w)
     delsamps += fn;
     fn = fn - 1.0f;
 
-    idelsamps = delsamps; // this is converting a sample to an int, or it's
-    // moving the pointer?
+    idelsamps = delsamps; // moving the pointer?
     frac = delsamps - (t_sample)idelsamps;
     rp = wp - idelsamps;
     if (rp < vp + XTRASAMPS) rp += delay_buffer_samps;
@@ -166,12 +153,10 @@ static t_int *delay_perform(t_int *w)
     a = rp[0];
     cminusb = c - b;
 
-    // no interpolation yet. let's see if it works
-    // *out++ = *rp++;
     *out++ = b + frac * (
-      cminusb - 0.1666667f * (1.0 - frac) * (
-      (d - a - 3.0f * cminusb) * frac + (d + 2.0f * a - 3.0f * b)
-      )
+        cminusb - 0.1666667f * (1.-frac) * (
+            (d - a - 3.0f * cminusb) * frac + (d + 2.0f*a - 3.0f*b)
+        )
     );
 
     if (rp == ep) rp -= delay_buffer_samps;
@@ -193,7 +178,7 @@ static void delay_free(t_delay *x)
 {
   if (x->x_delay_buffer != NULL) {
     freebytes(x->x_delay_buffer,
-              x->x_delay_buffer_samples * sizeof(t_sample));
+              (x->x_delay_buffer_samples + XTRASAMPS) * sizeof(t_sample));
     x->x_delay_buffer = NULL;
   }
 }

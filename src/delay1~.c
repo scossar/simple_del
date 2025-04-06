@@ -1,6 +1,16 @@
 #include "simple_del_shared.h"
 #include <m_pd.h>
 
+/* The relevant part of simple_del_shared:
+* #ifndef SIMPLE_DEL_SHARED_H
+* #define SIMPLE_DEL_SHARED_H
+*
+* #include "m_pd.h"
+*
+* #define XTRASAMPS 4
+* #define SAMPBLK 4
+*/
+
 typedef struct _delay1 {
   t_object x_obj;
 
@@ -66,14 +76,8 @@ static void delay_buffer_update(t_delay1 *x)
 
 static void delay_set_system_params(t_delay1 *x, int blocksize, t_float sr)
 {
-  if (blocksize > x->x_pd_block_size) {
-    x->x_pd_block_size = blocksize;
-  }
-
-  // awkward, but maybe clearer than the original source code?
-  if ((sr * 0.001f) > x->x_s_per_msec) {
-    x->x_s_per_msec = sr * 0.001f;
-  }
+  x->x_pd_block_size = blocksize;
+  x->x_s_per_msec = sr * 0.001f;
 }
 
 static void delay_set_delay_samples(t_delay1 *x, t_float f)
@@ -82,7 +86,7 @@ static void delay_set_delay_samples(t_delay1 *x, t_float f)
   // this approach might make sense later when x->delay_msecs can be set via a
   // message instead of just as a creating argument.
   x->x_delay_msecs = f;
-  x->x_delay_samples = (int)(0.5 + x->x_s_per_msec * x->x_delay_msecs) + x->x_pd_block_size;
+  x->x_delay_samples = (int)(0.5 + x->x_s_per_msec * x->x_delay_msecs);
 }
 
 static t_int *delay1_perform(t_int *w)
@@ -93,24 +97,30 @@ static t_int *delay1_perform(t_int *w)
   int n = (int)(w[4]);
 
   int write_phase = x->x_phase;
-  write_phase += n;
+  write_phase += n; // increment write position by block size for new loop
   int read_phase = write_phase - x->x_delay_samples;
 
   int delay_buffer_samps = x->x_delay_buffer_samples;
 
-  t_sample *vp = x->x_delay_buffer;
-  t_sample *wp = vp + write_phase;
-  t_sample *rp;
-  t_sample *ep = vp + (x->x_delay_buffer_samples + XTRASAMPS);
+  t_sample *vp = x->x_delay_buffer; // pointer to beginning of delay buffer
+  t_sample *wp = vp + write_phase; // pointer to current write position
+  t_sample *rp; // pointer to current read position
+  t_sample *ep = vp + (x->x_delay_buffer_samples + XTRASAMPS); // pointer to end
+  // of delay buffer
 
-  if (read_phase < 0) read_phase += delay_buffer_samps;
+  // if write_phase , x->x_delay_samples is before the beginning of the buffer
+  if (read_phase < 0) read_phase += delay_buffer_samps; 
   rp = vp + read_phase;
 
   while (n--) {
     // write input to delay buffer
+    // the output sounds clear, but does the read/write order matter?
     t_sample f = *in1++;
     if (PD_BIGORSMALL(f)) f = 0.0f;
     *wp++ = f;
+    // this is an attempt to copy what's happening in the Pure Data source code
+    // my understanding is that vp[0] to vp[3] only get written to here, but may
+    // be accessed by the read pointer
     if (wp == ep) {
       vp[0] = ep[-4];
       vp[1] = ep[-3];
@@ -141,7 +151,7 @@ static void delay_free(t_delay1 *x)
 {
   if (x->x_delay_buffer != NULL) {
     freebytes(x->x_delay_buffer,
-              x->x_delay_buffer_samples * sizeof(t_sample));
+              (x->x_delay_buffer_samples + XTRASAMPS) * sizeof(t_sample));
     x->x_delay_buffer = NULL;
   }
 }
