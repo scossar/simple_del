@@ -141,8 +141,8 @@ static t_int *delay_perform(t_int *w)
     if (!(delsamps >= 1.00001f)) delsamps = 1.00001f;
     if (delsamps > limit) delsamps = limit;
 
-    // create a sliding window
-    delsamps += fn; // initialized to pd_block_size - 1
+    // create a sliding window of pd block size
+    delsamps += fn;
     fn = fn - 1.0f;
     idelsamps = delsamps;
     t_sample delay_frac = delsamps - (t_sample)idelsamps;
@@ -164,9 +164,8 @@ static t_int *delay_perform(t_int *w)
         )
     );
 
-    // wet dry hardcoded for now
     *out++ = 0.5f * delayed_output + 0.5f * f;
-    // feedback hardcoded for now
+
     *wp++ = f * 0.6f + delayed_output * 0.4f;
   }
 
