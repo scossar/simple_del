@@ -101,7 +101,7 @@ static t_int *delay_perform(t_int *w)
   t_sample *wp = vp + write_phase;
   t_sample *ep = vp + (x->x_delay_buffer_samples + XTRASAMPS);
 
-  t_sample fn = n - 1;
+  t_sample fn = n - 1; // last index of n
 
   t_sample limit = delay_buffer_samples - n;
   if (limit < 0) {
@@ -126,7 +126,6 @@ static t_int *delay_perform(t_int *w)
   while (n--) {
     t_sample f = *in1++;
     if (PD_BIGORSMALL(f)) f = 0.0f;
-    *wp++ = f;
     if (wp == ep) {
       vp[0] = ep[-4];
       vp[1] = ep[-3];
@@ -142,12 +141,16 @@ static t_int *delay_perform(t_int *w)
     if (!(delsamps >= 1.00001f)) delsamps = 1.00001f;
     if (delsamps > limit) delsamps = limit;
 
+    // create a sliding window of pd block size
     delsamps += fn;
     fn = fn - 1.0f;
     idelsamps = delsamps;
     t_sample delay_frac = delsamps - (t_sample)idelsamps;
     int read_phase = write_phase - idelsamps;
 
+    // possibly delay_buffer_samples should be set to a power of 2 so that bit
+    // masking can be used here
+    // there's an example in `linreg~.c` for how that could be done
     if (read_phase < XTRASAMPS) read_phase += delay_buffer_samples;
     t_sample a = vp[read_phase];
     t_sample b = vp[read_phase - 1];
@@ -155,16 +158,15 @@ static t_int *delay_perform(t_int *w)
     t_sample d = vp[read_phase - 3];
     t_sample cminusb = c-b;
 
-    *out++ = b + delay_frac * (
+    t_sample delayed_output = b + delay_frac * (
         cminusb - 0.1666667f * (1.-delay_frac) * (
             (d - a - 3.0f * cminusb) * delay_frac + (d + 2.0f*a - 3.0f*b)
         )
     );
 
-    read_phase++;
-    if (read_phase > delay_buffer_samples) {
-      read_phase -= delay_buffer_samples;
-    }
+    *out++ = 0.5f * delayed_output + 0.5f * f;
+
+    *wp++ = f * 0.6f + delayed_output * 0.4f;
   }
 
   x->x_phase = write_phase;
