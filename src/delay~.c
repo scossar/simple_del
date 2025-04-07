@@ -82,7 +82,7 @@ static void delay_set_delay_samples(t_delay *x, t_float f)
   // this approach might make sense later when x->delay_msecs can be set via a
   // message instead of just as a creating argument.
   x->x_delay_msecs = f;
-  x->x_delay_samples = x->x_s_per_msec * x->x_delay_msecs;
+  x->x_delay_samples = (int)(0.5 + x->x_s_per_msec * x->x_delay_msecs);
 }
 
 static t_int *delay_perform(t_int *w)
@@ -94,22 +94,40 @@ static t_int *delay_perform(t_int *w)
   int n = (int)(w[5]);
 
   int delay_buffer_samples = x->x_delay_buffer_samples;
-  int delay_samples_int = (int)x->x_delay_samples;
-
-  t_float delay_frac = x->x_delay_samples - delay_samples_int;
+  // int delay_samples_int = (int)x->x_delay_samples;
+  //
+  // t_float delay_frac = x->x_delay_samples - delay_samples_int;
   int write_phase = x->x_phase;
   write_phase += n; // increment write position by block size for new loop
 
-  int read_phase = write_phase - delay_samples_int;
-  if (read_phase < 0) read_phase += delay_buffer_samples; 
+  // int read_phase = write_phase - delay_samples_int;
+  // if (read_phase < 0) read_phase += delay_buffer_samples; 
 
   t_sample *vp = x->x_delay_buffer;
   t_sample *wp = vp + write_phase;
   t_sample *ep = vp + (x->x_delay_buffer_samples + XTRASAMPS);
 
-  post("delay_buffer_samples: %d", delay_buffer_samples);
-  post("delay_samples_int: %d", delay_samples_int);
-  post("delay_frac: %f", delay_frac);
+  t_sample fn = n - 1;
+
+  t_sample limit = delay_buffer_samples - n;
+  if (limit < 0) {
+    while (n--) {
+      t_sample f = *in1++;
+      if (PD_BIGORSMALL(f)) f = 0.0f;
+      *wp++ = f;
+      if (wp == ep) {
+        vp[0] = ep[-4];
+        vp[1] = ep[-3];
+        vp[2] = ep[-2];
+        vp[3] = ep[-1];
+        wp = vp + XTRASAMPS;
+        write_phase -= delay_buffer_samples;
+      }
+
+      *out++ = 0;
+    }
+    return (w+6);
+  }
 
   while (n--) {
     t_sample f = *in1++;
@@ -123,6 +141,17 @@ static t_int *delay_perform(t_int *w)
       wp = vp + XTRASAMPS;
       write_phase -= delay_buffer_samples;
     }
+
+    t_sample delsamps = x->x_s_per_msec * *in2++;
+    int idelsamps;
+
+    if (!(delsamps >= 1.00001f)) delsamps = 1.00001f;
+    if (delsamps > limit) delsamps = limit;
+    delsamps += fn;
+    fn = fn - 1.0f;
+    idelsamps = delsamps;
+    t_sample delay_frac = delsamps - (t_sample)idelsamps;
+    int read_phase = write_phase - idelsamps;
 
     if (read_phase < XTRASAMPS) read_phase += delay_buffer_samples;
     t_sample a = vp[read_phase];
@@ -139,7 +168,8 @@ static t_int *delay_perform(t_int *w)
 
     read_phase++;
     if (read_phase > delay_buffer_samples) {
-      read_phase -= delay_buffer_samples;
+      // read_phase -= delay_buffer_samples;
+      read_phase = XTRASAMPS;
     }
   }
 
