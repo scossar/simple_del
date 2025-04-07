@@ -33,12 +33,16 @@ static void *delay2_new(t_floatarg buffer_msecs, t_floatarg delay_msecs)
   x->x_delay_msecs = delay_msecs;
 
   x->x_s_per_msec = 0.0f;
-  x->x_delay_buffer_samples = 0;
   x->x_pd_block_size = 0;
-  x->x_phase = 0;
+  x->x_phase = XTRASAMPS;
   x->x_delay_samples = 0;
   
+  x->x_delay_buffer_samples = XTRASAMPS;
   x->x_delay_buffer = getbytes(XTRASAMPS * sizeof(t_sample));
+  if (x->x_delay_buffer == NULL) {
+    pd_error(x, "delay2~: unable to assign memory to delay buffer");
+    return NULL;
+  }
 
   delay_buffer_update(x);
   delay_set_delay_samples(x, x->x_delay_msecs);
@@ -52,7 +56,7 @@ static void *delay2_new(t_floatarg buffer_msecs, t_floatarg delay_msecs)
   return (void *)x;
 }
 
-static void delay_initialize_delay_buffer(t_delay2 *x)
+static void delay_buffer_update(t_delay2 *x)
 {
   int buffer_size = 1;
   while (buffer_size < x->x_delay_buffer_msecs * x->x_s_per_msec + XTRASAMPS + x->x_pd_block_size) {
@@ -63,27 +67,9 @@ static void delay_initialize_delay_buffer(t_delay2 *x)
                                               x->x_delay_buffer_samples *
                                               sizeof(t_sample), buffer_size * sizeof(t_sample));
   x->x_delay_buffer_samples = buffer_size;
-}
-
-static void delay_buffer_update(t_delay2 *x)
-{
-  int nsamps = x->x_delay_buffer_msecs * x->x_s_per_msec;
-  if (nsamps < 1) nsamps = 1;
-
-  // round up to a multiple of SAMPBLK
-  // see: `twos_complement_bit_masking.md`
-  nsamps += (- nsamps) & (SAMPBLK - 1);
-
-  // add a block of samples (to ensure buffer is big enough?)
-  nsamps += x->x_pd_block_size;
-
-  if (x->x_delay_buffer_samples < nsamps) {
-    x->x_delay_buffer = (t_sample *)resizebytes(x->x_delay_buffer,
-                                                x->x_delay_buffer_samples + XTRASAMPS * sizeof(t_sample),
-                                                (nsamps + XTRASAMPS) * sizeof(t_sample));
-    x->x_delay_buffer_samples = nsamps;
-    x->x_phase = XTRASAMPS;
-  }
+  x->x_phase = XTRASAMPS;
+  post("updated delay buffer");
+  post("x_delay_buffer_samples: %d", x->x_delay_buffer_samples);
 }
 
 static void delay_set_system_params(t_delay2 *x, int blocksize, t_float sr)
@@ -94,9 +80,6 @@ static void delay_set_system_params(t_delay2 *x, int blocksize, t_float sr)
 
 static void delay_set_delay_samples(t_delay2 *x, t_float f)
 {
-  // currently this is reassigning x->x_delay_msecs to x->x_delay_msecs
-  // this approach might make sense later when x->delay_msecs can be set via a
-  // message instead of just as a creating argument.
   x->x_delay_msecs = f;
   x->x_delay_samples = (int)(0.5 + x->x_s_per_msec * x->x_delay_msecs);
 }
@@ -112,10 +95,11 @@ static t_int *delay2_perform(t_int *w)
   int delay_buffer_samples = x->x_delay_buffer_samples;
   int write_phase = x->x_phase;
   write_phase += n; // increment write position by block size for new loop
+  write_phase = write_phase & (x->x_delay_buffer_samples - 1);
 
   t_sample *vp = x->x_delay_buffer;
   t_sample *wp = vp + write_phase;
-  t_sample *ep = vp + (x->x_delay_buffer_samples + XTRASAMPS);
+  t_sample *ep = vp + x->x_delay_buffer_samples;
 
   t_sample fn = n - 1; // last index of n
 
@@ -136,7 +120,7 @@ static t_int *delay2_perform(t_int *w)
         vp[2] = ep[-2];
         vp[3] = ep[-1];
         wp = vp + XTRASAMPS;
-        write_phase -= delay_buffer_samples;
+        write_phase = write_phase & (x->x_delay_buffer_samples - 1);
       }
 
       *out++ = 0;
@@ -153,7 +137,7 @@ static t_int *delay2_perform(t_int *w)
       vp[2] = ep[-2];
       vp[3] = ep[-1];
       wp = vp + XTRASAMPS;
-      write_phase -= delay_buffer_samples;
+      write_phase = write_phase & (x->x_delay_buffer_samples - 1);
     }
 
     t_sample delsamps = x->x_s_per_msec * *in2++;
@@ -168,11 +152,9 @@ static t_int *delay2_perform(t_int *w)
     idelsamps = delsamps;
     t_sample delay_frac = delsamps - (t_sample)idelsamps;
     int read_phase = write_phase - idelsamps;
+    read_phase = read_phase & (x->x_delay_buffer_samples - 1);
 
-    // possibly delay_buffer_samples should be set to a power of 2 so that bit
-    // masking can be used here
-    // there's an example in `linreg~.c` for how that could be done
-    if (read_phase < XTRASAMPS) read_phase += delay_buffer_samples;
+    // theoretically this should be safe without a check
     t_sample a = vp[read_phase];
     t_sample b = vp[read_phase - 1];
     t_sample c = vp[read_phase - 2];
@@ -206,7 +188,7 @@ static void delay_free(t_delay2 *x)
 {
   if (x->x_delay_buffer != NULL) {
     freebytes(x->x_delay_buffer,
-              (x->x_delay_buffer_samples + XTRASAMPS) * sizeof(t_sample));
+              x->x_delay_buffer_samples * sizeof(t_sample));
     x->x_delay_buffer = NULL;
   }
 }
