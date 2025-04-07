@@ -1,6 +1,8 @@
 #include "simple_del_shared.h"
 #include <m_pd.h>
 
+/* XTRASAMPS = 4 */
+
 typedef struct _delay2 {
   t_object x_obj;
 
@@ -228,5 +230,6 @@ void delay2_tilde_setup(void)
   class_addmethod(delay2_class, (t_method)delay_feedback,
                   gensym("feedback"), A_FLOAT, 0);
 
+  // dummy float arg is required by Pd
   CLASS_MAINSIGNALIN(delay2_class, t_delay2, x_delay_buffer_msecs);
 }
