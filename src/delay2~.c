@@ -52,6 +52,19 @@ static void *delay2_new(t_floatarg buffer_msecs, t_floatarg delay_msecs)
   return (void *)x;
 }
 
+static void delay_initialize_delay_buffer(t_delay2 *x)
+{
+  int buffer_size = 1;
+  while (buffer_size < x->x_delay_buffer_msecs * x->x_s_per_msec + XTRASAMPS + x->x_pd_block_size) {
+    buffer_size *= 2;
+  }
+
+  x->x_delay_buffer = (t_sample *)resizebytes(x->x_delay_buffer,
+                                              x->x_delay_buffer_samples *
+                                              sizeof(t_sample), buffer_size * sizeof(t_sample));
+  x->x_delay_buffer_samples = buffer_size;
+}
+
 static void delay_buffer_update(t_delay2 *x)
 {
   int nsamps = x->x_delay_buffer_msecs * x->x_s_per_msec;
