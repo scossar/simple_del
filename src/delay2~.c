@@ -1,7 +1,7 @@
 #include "simple_del_shared.h"
 #include <m_pd.h>
 
-typedef struct _delay {
+typedef struct _delay2 {
   t_object x_obj;
 
   t_float x_s_per_msec; // samples per msec
@@ -13,18 +13,21 @@ typedef struct _delay {
   int x_pd_block_size;
   int x_phase; // current __write__ position
 
+  t_float x_wet_dry;
+  t_float x_feedback;
+
   t_inlet *x_delay_msec_inlet;
 
-} t_delay;
+} t_delay2;
 
-t_class *delay_class = NULL;
+t_class *delay2_class = NULL;
 
-static void delay_buffer_update(t_delay *x);
-static void delay_set_delay_samples(t_delay *x, t_float f);
+static void delay_buffer_update(t_delay2 *x);
+static void delay_set_delay_samples(t_delay2 *x, t_float f);
 
-static void *delay_new(t_floatarg buffer_msecs, t_floatarg delay_msecs)
+static void *delay2_new(t_floatarg buffer_msecs, t_floatarg delay_msecs)
 {
-  t_delay *x = (t_delay *)pd_new(delay_class);
+  t_delay2 *x = (t_delay2 *)pd_new(delay2_class);
 
   x->x_delay_buffer_msecs = buffer_msecs;
   x->x_delay_msecs = delay_msecs;
@@ -49,7 +52,7 @@ static void *delay_new(t_floatarg buffer_msecs, t_floatarg delay_msecs)
   return (void *)x;
 }
 
-static void delay_buffer_update(t_delay *x)
+static void delay_buffer_update(t_delay2 *x)
 {
   int nsamps = x->x_delay_buffer_msecs * x->x_s_per_msec;
   if (nsamps < 1) nsamps = 1;
@@ -70,13 +73,13 @@ static void delay_buffer_update(t_delay *x)
   }
 }
 
-static void delay_set_system_params(t_delay *x, int blocksize, t_float sr)
+static void delay_set_system_params(t_delay2 *x, int blocksize, t_float sr)
 {
   x->x_pd_block_size = blocksize;
   x->x_s_per_msec = sr * 0.001f;
 }
 
-static void delay_set_delay_samples(t_delay *x, t_float f)
+static void delay_set_delay_samples(t_delay2 *x, t_float f)
 {
   // currently this is reassigning x->x_delay_msecs to x->x_delay_msecs
   // this approach might make sense later when x->delay_msecs can be set via a
@@ -85,9 +88,9 @@ static void delay_set_delay_samples(t_delay *x, t_float f)
   x->x_delay_samples = (int)(0.5 + x->x_s_per_msec * x->x_delay_msecs);
 }
 
-static t_int *delay_perform(t_int *w)
+static t_int *delay2_perform(t_int *w)
 {
-  t_delay *x = (t_delay*)(w[1]);
+  t_delay2 *x = (t_delay2*)(w[1]);
   t_sample *in1 = (t_sample *)(w[2]);
   t_sample *in2 = (t_sample *)(w[3]);
   t_sample *out = (t_sample *)(w[4]);
@@ -102,6 +105,11 @@ static t_int *delay_perform(t_int *w)
   t_sample *ep = vp + (x->x_delay_buffer_samples + XTRASAMPS);
 
   t_sample fn = n - 1; // last index of n
+
+  t_float wet_dry = x->x_wet_dry;
+  t_float wet_dry_inv = 1.0f - wet_dry;
+  t_float feedback = x->x_feedback;
+  t_float feedback_inv = 1.0f - feedback;
 
   t_sample limit = delay_buffer_samples - n;
   if (limit < 0) {
@@ -164,24 +172,24 @@ static t_int *delay_perform(t_int *w)
         )
     );
 
-    *out++ = 0.5f * delayed_output + 0.5f * f;
+    *out++ = wet_dry * delayed_output + wet_dry_inv * f;
 
-    *wp++ = f * 0.6f + delayed_output * 0.4f;
+    *wp++ = f * feedback_inv + delayed_output * feedback;
   }
 
   x->x_phase = write_phase;
   return (w+6);
 }
 
-static void delay_dsp(t_delay *x, t_signal **sp)
+static void delay2_dsp(t_delay2 *x, t_signal **sp)
 {
-  dsp_add(delay_perform, 5, x, sp[0]->s_vec, sp[1]->s_vec, sp[2]->s_vec, sp[0]->s_length);
+  dsp_add(delay2_perform, 5, x, sp[0]->s_vec, sp[1]->s_vec, sp[2]->s_vec, sp[0]->s_length);
   delay_set_system_params(x, sp[0]->s_length, sp[0]->s_sr);
   delay_buffer_update(x);
   delay_set_delay_samples(x, x->x_delay_msecs);
 }
 
-static void delay_free(t_delay *x)
+static void delay_free(t_delay2 *x)
 {
   if (x->x_delay_buffer != NULL) {
     freebytes(x->x_delay_buffer,
@@ -190,17 +198,40 @@ static void delay_free(t_delay *x)
   }
 }
 
-void delay_tilde_setup(void)
+static void delay_wet_dry(t_delay2 *x, t_floatarg f)
 {
-  delay_class = class_new(gensym("delay~"),
-                          (t_newmethod)delay_new,
+  if (f < 0.0f || f > 1.0f) {
+    pd_error(x, "delay2~: wet/dry mix must be in the range (0, 1). Setting to 0.");
+    f = 0.0f;
+  }
+  x->x_wet_dry = f;
+}
+
+static void delay_feedback(t_delay2 *x, t_floatarg f)
+{
+  if (f < 0.0f || f > 0.99f) {
+    pd_error(x, "delay2~: feedback must be in the range (0, 1). Setting to 0");
+    f = 0.0f;
+  }
+  x->x_feedback = f;
+}
+
+void delay2_tilde_setup(void)
+{
+  delay2_class = class_new(gensym("delay2~"),
+                          (t_newmethod)delay2_new,
                           (t_method)delay_free,
-                          sizeof(t_delay),
+                          sizeof(t_delay2),
                           CLASS_DEFAULT,
                           A_DEFFLOAT, A_DEFFLOAT, 0);
 
-  class_addmethod(delay_class, (t_method)delay_dsp,
+  class_addmethod(delay2_class, (t_method)delay2_dsp,
                   gensym("dsp"), A_CANT, 0);
 
-  CLASS_MAINSIGNALIN(delay_class, t_delay, x_delay_buffer_msecs);
+  class_addmethod(delay2_class, (t_method)delay_wet_dry,
+                  gensym("wet_dry"), A_FLOAT, 0);
+  class_addmethod(delay2_class, (t_method)delay_feedback,
+                  gensym("feedback"), A_FLOAT, 0);
+
+  CLASS_MAINSIGNALIN(delay2_class, t_delay2, x_delay_buffer_msecs);
 }
