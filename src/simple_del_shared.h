@@ -48,4 +48,18 @@ t_simple_delwrite *simple_delwrite_findbyname(t_symbol *s);
 void simple_delwrite_update(t_simple_delwrite *x);
 void simple_delwrite_check(t_simple_delwrite *x, int vecsize, t_float sr);
 
+static inline t_sample cubic_interpolate(t_sample *buffer, int phase, int mask, t_sample frac)
+{
+  t_sample a = buffer[phase];
+  t_sample b = buffer[(phase - 1) & mask];
+  t_sample c = buffer[(phase - 2) & mask];
+  t_sample d = buffer[(phase - 3) & mask];
+  t_sample cminusb = c - b;
+
+  return b + frac * (
+      cminusb - 0.1666667f * (1.0f - frac) * (
+          (d - a - 3.0f * cminusb) * frac + (d + 2.0f * a - 3.0f * b)
+      )
+  );
+}
 #endif

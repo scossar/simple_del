@@ -1,19 +1,20 @@
 #include "simple_del_shared.h"
 #include <m_pd.h>
 
-/* XTRASAMPS = 4 */
-
 typedef struct _delay2 {
   t_object x_obj;
 
   t_float x_s_per_msec; // samples per msec
   t_float x_delay_buffer_msecs;
   int x_delay_buffer_samples; // number of samples in delay buffer
+  int x_delay_buffer_initial_samples;
   t_float x_delay_msecs; // number of msecs to delay
   t_float x_delay_samples; // number of samples of delay
   t_sample *x_delay_buffer;
   int x_pd_block_size;
   int x_phase; // current __write__ position
+  t_float x_tap1_level;
+  t_float x_tap2_level;
 
   t_float x_wet_dry;
   t_float x_feedback;
@@ -31,23 +32,23 @@ static void *delay2_new(t_floatarg buffer_msecs, t_floatarg delay_msecs)
 {
   t_delay2 *x = (t_delay2 *)pd_new(delay2_class);
 
-  x->x_delay_buffer_msecs = buffer_msecs;
-  x->x_delay_msecs = delay_msecs;
+  x->x_delay_buffer_msecs = (buffer_msecs > 1) ? buffer_msecs : 1;
+  x->x_delay_msecs = (delay_msecs > 1) ? delay_msecs : 1;
 
   x->x_s_per_msec = 0.0f;
   x->x_pd_block_size = 0;
-  x->x_phase = XTRASAMPS;
+  x->x_phase = 0;
   x->x_delay_samples = 0;
   
-  x->x_delay_buffer_samples = XTRASAMPS;
-  x->x_delay_buffer = getbytes(XTRASAMPS * sizeof(t_sample));
+  x->x_delay_buffer_samples = 1024; // initialize with 2^10;
+  x->x_delay_buffer = getbytes(x->x_delay_buffer_samples * sizeof(t_sample));
   if (x->x_delay_buffer == NULL) {
     pd_error(x, "delay2~: unable to assign memory to delay buffer");
     return NULL;
   }
 
-  delay_buffer_update(x);
-  delay_set_delay_samples(x, x->x_delay_msecs);
+  x->x_tap1_level = 0.5f;
+  x->x_tap2_level = 0.5f;
 
   x->x_delay_msec_inlet = inlet_new(&x->x_obj, &x->x_obj.ob_pd, &s_signal, &s_signal);
   // set inlet initial float value
@@ -61,17 +62,23 @@ static void *delay2_new(t_floatarg buffer_msecs, t_floatarg delay_msecs)
 static void delay_buffer_update(t_delay2 *x)
 {
   int buffer_size = 1;
-  while (buffer_size < x->x_delay_buffer_msecs * x->x_s_per_msec + XTRASAMPS + x->x_pd_block_size) {
+  while (buffer_size < (x->x_delay_buffer_msecs * x->x_s_per_msec + x->x_pd_block_size)) {
     buffer_size *= 2;
   }
 
   x->x_delay_buffer = (t_sample *)resizebytes(x->x_delay_buffer,
                                               x->x_delay_buffer_samples *
                                               sizeof(t_sample), buffer_size * sizeof(t_sample));
+  // todo: maybe return an int value for success/failure?
+  if (x->x_delay_buffer == NULL) {
+    pd_error(x, "delay2~: unable to resize x_delay_buffer");
+    return;
+  }
+
   x->x_delay_buffer_samples = buffer_size;
-  x->x_phase = XTRASAMPS;
-  post("updated delay buffer");
-  post("x_delay_buffer_samples: %d", x->x_delay_buffer_samples);
+  x->x_phase = 0;
+  post("delay2~: (debug) updated delay buffer");
+  post("delay2~: (debug) x_delay_buffer_samples: %d", x->x_delay_buffer_samples);
 }
 
 static void delay_set_system_params(t_delay2 *x, int blocksize, t_float sr)
@@ -95,83 +102,72 @@ static t_int *delay2_perform(t_int *w)
   int n = (int)(w[5]);
 
   int delay_buffer_samples = x->x_delay_buffer_samples;
+  int delay_buffer_mask = delay_buffer_samples - 1;
   int write_phase = x->x_phase;
-  write_phase += n; // increment write position by block size for new loop
-  write_phase = write_phase & (x->x_delay_buffer_samples - 1);
+  write_phase = write_phase & delay_buffer_mask;
 
   t_sample *vp = x->x_delay_buffer;
-  t_sample *wp = vp + write_phase;
-  t_sample *ep = vp + x->x_delay_buffer_samples;
-
-  t_sample fn = n - 1; // last index of n
 
   t_float wet_dry = x->x_wet_dry;
   t_float wet_dry_inv = 1.0f - wet_dry;
   t_float feedback = x->x_feedback;
   t_float feedback_inv = 1.0f - feedback;
+  t_float tap1_level = x->x_tap1_level;
+  t_float tap2_level = x->x_tap2_level;
 
   t_sample limit = delay_buffer_samples - n;
   if (limit < 0) {
     while (n--) {
       t_sample f = *in1++;
       if (PD_BIGORSMALL(f)) f = 0.0f;
-      *wp++ = f;
-      if (wp == ep) {
-        vp[0] = ep[-4];
-        vp[1] = ep[-3];
-        vp[2] = ep[-2];
-        vp[3] = ep[-1];
-        wp = vp + XTRASAMPS;
-        write_phase = write_phase & (x->x_delay_buffer_samples - 1);
-      }
-
+      vp[write_phase] = f;
       *out++ = 0;
+      write_phase = (write_phase + 1) & delay_buffer_mask;
     }
+    x->x_phase = write_phase;
     return (w+6);
   }
 
   while (n--) {
     t_sample f = *in1++;
     if (PD_BIGORSMALL(f)) f = 0.0f;
-    if (wp == ep) {
-      vp[0] = ep[-4];
-      vp[1] = ep[-3];
-      vp[2] = ep[-2];
-      vp[3] = ep[-1];
-      wp = vp + XTRASAMPS;
-      write_phase = write_phase & (x->x_delay_buffer_samples - 1);
-    }
 
-    t_sample delsamps = x->x_s_per_msec * *in2++;
-    int idelsamps;
+    t_sample delms = *in2++;
 
-    if (!(delsamps >= 1.00001f)) delsamps = 1.00001f;
-    if (delsamps > limit) delsamps = limit;
+    // first tap
+    t_sample delsamps1 = x->x_s_per_msec * delms;
 
-    // create a sliding window of pd block size
-    delsamps += fn;
-    fn = fn - 1.0f;
-    idelsamps = delsamps;
-    t_sample delay_frac = delsamps - (t_sample)idelsamps;
-    int read_phase = write_phase - idelsamps;
-    read_phase = read_phase & (x->x_delay_buffer_samples - 1);
+    if (!(delsamps1 >= 1.00001f)) delsamps1 = 1.00001f;
+    if (delsamps1 > limit) delsamps1 = limit;
 
-    // theoretically this should be safe without a check
-    t_sample a = vp[read_phase];
-    t_sample b = vp[read_phase - 1];
-    t_sample c = vp[read_phase - 2];
-    t_sample d = vp[read_phase - 3];
-    t_sample cminusb = c-b;
+    int idelsamps1 = delsamps1;
+    int read_phase1 = (write_phase - idelsamps1) & delay_buffer_mask;
 
-    t_sample delayed_output = b + delay_frac * (
-        cminusb - 0.1666667f * (1.-delay_frac) * (
-            (d - a - 3.0f * cminusb) * delay_frac + (d + 2.0f*a - 3.0f*b)
-        )
-    );
+    t_sample frac1 = delsamps1 - (t_sample)idelsamps1;
 
-    *out++ = wet_dry * delayed_output + wet_dry_inv * f;
+    t_sample delayed_output1 = cubic_interpolate(vp, read_phase1, delay_buffer_mask, frac1);
 
-    *wp++ = f * feedback_inv + delayed_output * feedback;
+    // second tap
+    t_sample delsamps2 = x->x_s_per_msec * 2.0f * delms;
+
+    if (!(delsamps2 > 1.00001f)) delsamps2 = 1.00001f;
+    if (delsamps2 > limit) delsamps2 = limit;
+
+    int idelsamps2 = delsamps2;
+    int read_phase2 = (write_phase - idelsamps2) & delay_buffer_mask;
+
+    t_sample frac2 = delsamps2 - (t_sample)idelsamps2;
+
+    t_sample delayed_output2 = cubic_interpolate(vp, read_phase2, delay_buffer_mask, frac2);
+
+    // mix the taps
+    t_sample output = delayed_output1 * tap1_level + delayed_output2 * tap2_level;
+
+    *out++ = wet_dry * output + wet_dry_inv * f;
+
+    vp[write_phase] = f * feedback_inv + delayed_output1 * feedback;
+
+    write_phase = (write_phase + 1) & delay_buffer_mask;
   }
 
   x->x_phase = write_phase;
