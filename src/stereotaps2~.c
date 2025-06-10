@@ -1,7 +1,7 @@
 #include "simple_del_shared.h"
 #include <m_pd.h>
 
-typedef struct _stereotaps {
+typedef struct _stereotaps2 {
   t_object x_obj;
 
   t_float x_s_per_msec; // samples per msec
@@ -26,16 +26,16 @@ typedef struct _stereotaps {
   t_outlet *x_out1;
   t_outlet *x_out2;
 
-} t_stereotaps;
+} t_stereotaps2;
 
-t_class *stereotaps_class = NULL;
+t_class *stereotaps2_class = NULL;
 
-static void delay_buffer_update(t_stereotaps *x);
-static void delay_set_delay_samples(t_stereotaps *x, t_float f);
+static void delay_buffer_update(t_stereotaps2 *x);
+static void delay_set_delay_samples(t_stereotaps2 *x, t_float f);
 
-static void *stereotaps_new(t_floatarg buffer_msecs, t_floatarg delay_msecs)
+static void *stereotaps2_new(t_floatarg buffer_msecs, t_floatarg delay_msecs)
 {
-  t_stereotaps *x = (t_stereotaps *)pd_new(stereotaps_class);
+  t_stereotaps2 *x = (t_stereotaps2 *)pd_new(stereotaps2_class);
 
   x->x_delay_buffer_msecs = (buffer_msecs > 1) ? buffer_msecs : 1;
   x->x_delay_msecs = (delay_msecs > 1) ? delay_msecs : 1;
@@ -49,12 +49,12 @@ static void *stereotaps_new(t_floatarg buffer_msecs, t_floatarg delay_msecs)
 
   x->x_delay_buffer_l = getbytes(x->x_delay_buffer_samples * sizeof(t_sample));
   if (x->x_delay_buffer_l == NULL) {
-    pd_error(x, "stereotaps~: unable to assign memory to delay buffer");
+    pd_error(x, "stereotaps2~: unable to assign memory to delay buffer");
     return NULL;
     }
   x->x_delay_buffer_r = getbytes(x->x_delay_buffer_samples * sizeof(t_sample));
   if (x->x_delay_buffer_r == NULL) {
-    pd_error(x, "stereotaps~: unable to assign memory to delay buffer");
+    pd_error(x, "stereotaps2~: unable to assign memory to delay buffer");
     return NULL;
     }
 
@@ -73,7 +73,7 @@ static void *stereotaps_new(t_floatarg buffer_msecs, t_floatarg delay_msecs)
   return (void *)x;
 }
 
-static void delay_buffer_update(t_stereotaps *x)
+static void delay_buffer_update(t_stereotaps2 *x)
 {
   int buffer_size = 1;
   while (buffer_size < (x->x_delay_buffer_msecs * x->x_s_per_msec + x->x_pd_block_size)) {
@@ -84,38 +84,38 @@ static void delay_buffer_update(t_stereotaps *x)
                                               x->x_delay_buffer_samples *
                                               sizeof(t_sample), buffer_size * sizeof(t_sample));
   if (x->x_delay_buffer_l == NULL) {
-    pd_error(x, "stereotaps~: unable to resize x_delay_buffer_l");
+    pd_error(x, "stereotaps2~: unable to resize x_delay_buffer_l");
     return;
   }
   x->x_delay_buffer_r = (t_sample *)resizebytes(x->x_delay_buffer_r,
                                               x->x_delay_buffer_samples *
                                               sizeof(t_sample), buffer_size * sizeof(t_sample));
   if (x->x_delay_buffer_r == NULL) {
-    pd_error(x, "stereotaps~: unable to resize x_delay_buffer_r");
+    pd_error(x, "stereotaps2~: unable to resize x_delay_buffer_r");
     return;
   }
 
   x->x_delay_buffer_samples = buffer_size;
   x->x_phase = 0;
-  post("stereotaps~: (debug) updated delay buffer");
-  post("stereotaps~: (debug) x_delay_buffer_samples: %d", x->x_delay_buffer_samples);
+  post("stereotaps2~: (debug) updated delay buffer");
+  post("stereotaps2~: (debug) x_delay_buffer_samples: %d", x->x_delay_buffer_samples);
 }
 
-static void delay_set_system_params(t_stereotaps *x, int blocksize, t_float sr)
+static void delay_set_system_params(t_stereotaps2 *x, int blocksize, t_float sr)
 {
   x->x_pd_block_size = blocksize;
   x->x_s_per_msec = sr * 0.001f;
 }
 
-static void delay_set_delay_samples(t_stereotaps *x, t_float f)
+static void delay_set_delay_samples(t_stereotaps2 *x, t_float f)
 {
   x->x_delay_msecs = f;
   x->x_delay_samples = (int)(0.5 + x->x_s_per_msec * x->x_delay_msecs);
 }
 
-static t_int *stereotaps_perform(t_int *w)
+static t_int *stereotaps2_perform(t_int *w)
 {
-  t_stereotaps *x = (t_stereotaps *)(w[1]);
+  t_stereotaps2 *x = (t_stereotaps2 *)(w[1]);
   t_sample *in1 = (t_sample *)(w[2]);
   t_sample *in2 = (t_sample *)(w[3]);
   t_sample *out1 = (t_sample *)(w[4]);
@@ -136,7 +136,8 @@ static t_int *stereotaps_perform(t_int *w)
   t_float cross_feedback = x->x_cross_feedback;
   t_float feedback = x->x_feedback - cross_feedback;
   t_float feedback_inv = (1.0f - feedback);
-  t_float tap_level = (1.0f / x->x_num_taps) * 0.5f;
+  // t_float tap_level = (1.0f / x->x_num_taps) * 0.5f;
+   t_float tap_level = (1.0f / x->x_num_taps);
 
   t_sample limit = delay_buffer_samples - n;
 
@@ -200,15 +201,15 @@ static t_int *stereotaps_perform(t_int *w)
   return (w+7);
 }
 
-static void stereotaps_dsp(t_stereotaps *x, t_signal **sp)
+static void stereotaps2_dsp(t_stereotaps2 *x, t_signal **sp)
 {
-  dsp_add(stereotaps_perform, 6, x, sp[0]->s_vec, sp[1]->s_vec, sp[2]->s_vec, sp[3]->s_vec, sp[0]->s_length);
+  dsp_add(stereotaps2_perform, 6, x, sp[0]->s_vec, sp[1]->s_vec, sp[2]->s_vec, sp[3]->s_vec, sp[0]->s_length);
   delay_set_system_params(x, sp[0]->s_length, sp[0]->s_sr);
   delay_buffer_update(x);
   delay_set_delay_samples(x, x->x_delay_msecs);
 }
 
-static void delay_free(t_stereotaps *x)
+static void delay_free(t_stereotaps2 *x)
 {
   if (x->x_delay_buffer_l != NULL) {
     freebytes(x->x_delay_buffer_l,
@@ -230,76 +231,76 @@ static void delay_free(t_stereotaps *x)
   }
 }
 
-static void delay_wet_dry(t_stereotaps *x, t_floatarg f)
+static void delay_wet_dry(t_stereotaps2 *x, t_floatarg f)
 {
   if (f < 0.0f || f > 1.0f) {
-    pd_error(x, "stereotaps~: wet/dry mix must be in the range (0, 1). Setting to 0.");
+    pd_error(x, "stereotaps2~: wet/dry mix must be in the range (0, 1). Setting to 0.");
     f = 0.0f;
   }
   x->x_wet_dry = f;
 }
 
-static void delay_feedback(t_stereotaps *x, t_floatarg f)
+static void delay_feedback(t_stereotaps2 *x, t_floatarg f)
 {
   if (f < 0.0f || f > 0.99f) {
-    pd_error(x, "stereotaps~: feedback must be in the range (0, 1). Setting to 0");
+    pd_error(x, "stereotaps2~: feedback must be in the range (0, 1). Setting to 0");
     f = 0.0f;
   }
   x->x_feedback = f;
 }
 
-static void delay_taps(t_stereotaps *x, t_floatarg f)
+static void delay_taps(t_stereotaps2 *x, t_floatarg f)
 {
   if (f < 1) {
-    pd_error(x, "stereotaps~: there needs to be at least 1 tap. Setting to 1");
+    pd_error(x, "stereotaps2~: there needs to be at least 1 tap. Setting to 1");
     f = 1.0f;
   }
   x->x_num_taps = (int)f;
 }
 
-static void delay_feedback_tap_l(t_stereotaps *x, t_floatarg f)
+static void delay_feedback_tap_l(t_stereotaps2 *x, t_floatarg f)
 {
   x->x_feedback_tap_l = (int)f;
 }
 
-static void delay_feedback_tap_r(t_stereotaps *x, t_floatarg f)
+static void delay_feedback_tap_r(t_stereotaps2 *x, t_floatarg f)
 {
   x->x_feedback_tap_r = (int)f;
 }
 
-static void delay_cross_feedback(t_stereotaps *x, t_floatarg f)
+static void delay_cross_feedback(t_stereotaps2 *x, t_floatarg f)
 {
   if (f > 1.0f || f < 0.0f) f = 0.0f; // todo: add message
 
   x->x_cross_feedback = f;
 }
 
-void stereotaps_tilde_setup(void)
+void stereotaps2_tilde_setup(void)
 {
-  stereotaps_class = class_new(gensym("stereotaps~"),
-                          (t_newmethod)stereotaps_new,
+  stereotaps2_class = class_new(gensym("stereotaps2~"),
+                          (t_newmethod)stereotaps2_new,
                           (t_method)delay_free,
-                          sizeof(t_stereotaps),
+                          sizeof(t_stereotaps2),
                           CLASS_DEFAULT,
                           A_DEFFLOAT, A_DEFFLOAT, 0);
 
-  class_addmethod(stereotaps_class, (t_method)stereotaps_dsp,
+  class_addmethod(stereotaps2_class, (t_method)stereotaps2_dsp,
                   gensym("dsp"), A_CANT, 0);
 
-  class_addmethod(stereotaps_class, (t_method)delay_wet_dry,
+  class_addmethod(stereotaps2_class, (t_method)delay_wet_dry,
                   gensym("wet_dry"), A_FLOAT, 0);
-  class_addmethod(stereotaps_class, (t_method)delay_feedback,
+  class_addmethod(stereotaps2_class, (t_method)delay_feedback,
                   gensym("feedback"), A_FLOAT, 0);
-  class_addmethod(stereotaps_class, (t_method)delay_taps,
+  class_addmethod(stereotaps2_class, (t_method)delay_taps,
                   gensym("taps"), A_FLOAT, 0);
-  class_addmethod(stereotaps_class, (t_method)delay_feedback_tap_l,
+  class_addmethod(stereotaps2_class, (t_method)delay_feedback_tap_l,
                   gensym("feedback_tap_l"), A_FLOAT, 0);
-  class_addmethod(stereotaps_class, (t_method)delay_feedback_tap_r,
+  class_addmethod(stereotaps2_class, (t_method)delay_feedback_tap_r,
                   gensym("feedback_tap_r"), A_FLOAT, 0);
-  class_addmethod(stereotaps_class, (t_method)delay_cross_feedback,
+  class_addmethod(stereotaps2_class, (t_method)delay_cross_feedback,
                   gensym("cross_feedback"), A_FLOAT, 0);
 
   // dummy float arg is required by Pd
   // but... is this right?
-  CLASS_MAINSIGNALIN(stereotaps_class, t_stereotaps, x_delay_buffer_msecs);
+  CLASS_MAINSIGNALIN(stereotaps2_class, t_stereotaps2, x_delay_buffer_msecs);
 }
